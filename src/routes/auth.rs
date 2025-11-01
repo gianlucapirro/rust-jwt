@@ -143,7 +143,7 @@ pub async fn login_user(
     ),
 )]
 async fn me(Auth(claims): Auth, State(state): State<AppState>) -> Result<Json<UserResponse>, AppError> {
-    let user = users::Entity::by(users::Column::Id, claims.sub)
+    let user = users::Entity::by(users::Column::Id, claims.sub.parse::<i32>().unwrap())
         .one(&state.db)
         .await
         .map_err(|_| AppError::Internal)?;
