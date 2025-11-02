@@ -1,4 +1,7 @@
-use axum::{Json, extract::State};
+use axum::{Json, extract::State, http::StatusCode};
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use cookie::time::Duration;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue::Set;
 use sea_orm::SqlErr;
@@ -10,19 +13,15 @@ use crate::core::errors::app::AppError;
 use crate::entities::extensions::models::ByColumn;
 use crate::entities::users;
 use crate::services::auth::{Auth, Hasher, sign_jwt};
-
 // API DOCS
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(
-        create_user,
-        login_user,
-        me
-    ),
+    paths(create_user, login_user, logout, me),
     components(
-        schemas(CreateUser, LoginUser),
+        schemas(CreateUser, LoginUser, UserResponse),
     ),
+    security(("cookieAuth" = [])),   // apply globally (optional)
     tags((name = "Auth", description = "User authentication"))
 )]
 pub struct ApiDocAuth;
@@ -34,6 +33,7 @@ pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/register", axum::routing::post(create_user))
         .route("/login", axum::routing::post(login_user))
+        .route("/logout", axum::routing::post(logout))
         .route("/me", axum::routing::get(me))
 }
 
@@ -93,15 +93,14 @@ pub async fn create_user(
     }
 }
 
+pub const AUTH_COOKIE: &str = "_auth";
+// TODO: refresh cookie endpoint
+// const REFRESH_COOKIE: &str = "_refresh";
+
 #[derive(Deserialize, ToSchema)]
 pub struct LoginUser {
     pub email: String,
     pub password: String,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct LoginResponse {
-    pub token: String,
 }
 
 #[utoipa::path(
@@ -110,33 +109,61 @@ pub struct LoginResponse {
     path = "/api/auth/login",
     request_body = LoginUser,
     responses(
-        (status = 200, description = "Login successful"),
+        (status = 204, description = "Login successful, cookie set"),
         (status = 401, description = "Unauthorized"),
         (status = 422, description = "Invalid input"),
     )
 )]
 pub async fn login_user(
     State(state): State<AppState>,
-    Json(payload): Json<LoginUser>,
-) -> Result<Json<LoginResponse>, AppError> {
+    jar: CookieJar,
+    axum::Json(payload): axum::Json<LoginUser>,
+) -> Result<(CookieJar, StatusCode), AppError> {
     let user = users::Entity::by(users::Column::Email, payload.email.to_lowercase())
         .one(&state.db)
-        .await;
-    let user = match user {
-        Ok(Some(user)) => {
-            let hasher = Hasher {
-                hash: user.hashed_pwd.clone(),
-            };
-            if !hasher.verify(&payload.password) {
-                return Err(AppError::Unauthorized("Invalid credentials"));
-            }
-            user
-        }
-        Ok(None) => return Err(AppError::Unauthorized("Invalid credentials")),
-        Err(_) => return Err(AppError::Internal),
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let Some(user) = user else {
+        return Err(AppError::Unauthorized("Invalid credentials"));
     };
-    let token = sign_jwt(user.id, &user.email, &state.jwt);
-    Ok(Json(LoginResponse { token: token? }))
+
+    let hasher = Hasher {
+        hash: user.hashed_pwd.clone(),
+    };
+    if !hasher.verify(&payload.password) {
+        return Err(AppError::Unauthorized("Invalid credentials"));
+    }
+
+    let token = sign_jwt(user.id, &user.email, &state.jwt)?; // your existing signer
+
+    // Build secure HttpOnly cookie
+    let cookie = Cookie::build((AUTH_COOKIE, token))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .max_age(Duration::days(7))
+        .build();
+
+    Ok((jar.add(cookie), StatusCode::NO_CONTENT))
+}
+
+#[utoipa::path(
+    post,
+    tags = ["Auth"],
+    path = "/api/auth/logout",
+    responses((status = 204, description = "Logged out"))
+)]
+pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
+    let removal = Cookie::build(AUTH_COOKIE)
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(Duration::seconds(0)) // expire immediately
+        .build();
+    (jar.add(removal), StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(
@@ -151,19 +178,23 @@ pub async fn login_user(
 async fn me(
     Auth(claims): Auth,
     State(state): State<AppState>,
-) -> Result<Json<UserResponse>, AppError> {
-    let user = users::Entity::by(users::Column::Id, claims.sub.parse::<i32>().unwrap())
+) -> Result<axum::Json<UserResponse>, AppError> {
+    let uid: i32 = claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::Unauthorized("Bad sub"))?;
+    let user = users::Entity::by(users::Column::Id, uid)
         .one(&state.db)
         .await
         .map_err(|_| AppError::Internal)?;
 
-    let body = match user {
-        Some(user) => UserResponse {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-        },
-        None => return Err(AppError::Unauthorized("User not found")),
+    let Some(user) = user else {
+        return Err(AppError::Unauthorized("User not found"));
     };
-    Ok(Json(body))
+
+    Ok(axum::Json(UserResponse {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+    }))
 }

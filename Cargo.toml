@@ -7,8 +7,8 @@ edition = "2024"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-axum = "0.8.6"
-axum-extra = {version="0.12.0", features=["typed-header"]}
+axum = { version = "0.8.6", features = ["json"] }
+axum-extra = { version = "0.12.0", features = ["cookie", "typed-header"] }
 anyhow = "1.0.100"
 
 # OpenAPI + UI (enable the axum feature!)
@@ -29,6 +29,7 @@ headers = "0.4.1"
 
 # Logging
 tower = "0.5.2"
-tower-http = {version="0.6.6", features=["trace", "catch-panic"]}
+tower-http = { version = "0.6.6", features = ["trace", "catch-panic", "cors"] }
 tracing = "0.1.41"
 tracing-subscriber = {version="0.3.20", features = ["env-filter"]}
+cookie = "0.18.1"

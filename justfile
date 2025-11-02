@@ -30,6 +30,6 @@ build:
 openapi-generate:
     @echo "Generate api endpoints"
     npx openapi-typescript-codegen \
-      --input http://localhost:8080/api/schema/ \
+      --input http://localhost:3000/api-doc/openapi.json \
       --output ./front-end/app/api \
       --client fetch \

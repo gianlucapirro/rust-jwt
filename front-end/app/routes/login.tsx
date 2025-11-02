@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-// import { AuthService } from "~/api/services/AuthService";
+import { AuthService } from "~/api/services/AuthService";
 import { loginSchema } from "schemas/login";
 import { GoogleLoginButton } from "~/components/google/GoogleLoginButton";
 import type { Route } from "./+types/login";
@@ -12,9 +12,8 @@ type FormData = z.infer<typeof loginSchema>;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   try {
-    // const token = await AuthService.authTokenVerifyCreate();
-    const token = 1111;
-    return token;
+    const user = await AuthService.me();
+    return user;
   } catch {
     return null;
   }
@@ -27,9 +26,10 @@ export function shouldRevalidate() {
 export default function Login({ loaderData }: Route.ComponentProps) {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const user = loaderData;
 
   useEffect(() => {
-    if (loaderData?.token) {
+    if (user) {
       navigate("/", { replace: true });
     }
   }, [loaderData, navigate]);
@@ -46,10 +46,10 @@ export default function Login({ loaderData }: Route.ComponentProps) {
     setError(null);
 
     try {
-      // const response = await AuthService.authLoginCreate({
-      //   email: data.email,
-      //   password: data.password,
-      // });
+      await AuthService.loginUser({
+        email: data.email,
+        password: data.password,
+      });
 
       navigate("/");
     } catch (err: any) {
@@ -62,11 +62,7 @@ export default function Login({ loaderData }: Route.ComponentProps) {
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="flex min-h-full flex-1 flex-col justify-center py-12 sm:px-6 lg:px-8">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <img
-            alt="Ampco flashlight"
-            src="/downloads/ampco-logo.svg"
-            className="mx-auto h-10 w-auto"
-          />
+          <p className="text-2xl font-bold">RUST API APP</p>
           <h2 className="mt-6 text-center text-2xl font-bold text-gray-900">
             Sign in to your account
           </h2>
