@@ -2,13 +2,14 @@ mod core;
 mod entities;
 mod routes;
 mod services;
+mod settings;
 
 use crate::services::auth::JwtConfig;
+use crate::settings::SETTINGS;
 use axum::Router;
 use axum::http::{Request, Response};
 use dotenvy::dotenv;
 use sea_orm::{Database, DatabaseConnection};
-use std::env;
 use std::panic;
 use std::time::Duration;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -50,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     // Init DB and AppState
-    let db_url = env::var("DATABASE_URL")?;
+    let db_url = SETTINGS.database_url.clone();
     let db = Database::connect(&db_url).await?;
 
     let jwt = JwtConfig::from_env()?;
@@ -58,9 +59,11 @@ async fn main() -> anyhow::Result<()> {
 
     let openapi = ApiDoc::openapi().merge_from(routes::auth::ApiDocAuth::openapi());
 
+    let swagger = SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi.clone());
+
     let app = Router::new()
         .nest("/api/auth", routes::auth::router())
-        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi.clone()))
+        .merge(swagger)
         .merge(Redoc::with_url("/redoc", openapi.clone()))
         .with_state(state);
 

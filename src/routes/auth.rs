@@ -1,3 +1,4 @@
+use crate::settings::SETTINGS;
 use axum::{Json, extract::State, http::StatusCode};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
@@ -6,6 +7,10 @@ use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue::Set;
 use sea_orm::SqlErr;
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{
+    OpenApi as OA,
+    security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme},
+};
 use utoipa::{OpenApi, ToSchema};
 
 use crate::AppState;
@@ -13,7 +18,29 @@ use crate::core::errors::app::AppError;
 use crate::entities::extensions::models::ByColumn;
 use crate::entities::users;
 use crate::services::auth::{Auth, Hasher, sign_jwt};
+use utoipa::Modify;
+
 // API DOCS
+pub struct AddCookieAuth;
+impl Modify for AddCookieAuth {
+    fn modify(&self, doc: &mut OA) {
+        // Add cookie security scheme
+        let mut comps = doc.components.take().unwrap_or_default();
+        comps.add_security_scheme(
+            "cookieAuth",
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new(
+                SETTINGS.auth_cookie_name.clone(),
+            ))),
+        );
+        doc.components = Some(comps);
+
+        // Add global security requirement
+        let mut reqs = doc.security.take().unwrap_or_default();
+        let sec_req = SecurityRequirement::new("cookieAuth", Vec::<String>::new());
+        reqs.push(sec_req);
+        doc.security = Some(reqs);
+    }
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -21,7 +48,7 @@ use crate::services::auth::{Auth, Hasher, sign_jwt};
     components(
         schemas(CreateUser, LoginUser, UserResponse),
     ),
-    security(("cookieAuth" = [])),
+    modifiers(&AddCookieAuth),
     tags((name = "Auth", description = "User authentication"))
 )]
 pub struct ApiDocAuth;
@@ -94,10 +121,6 @@ pub async fn create_user(
     }
 }
 
-pub const AUTH_COOKIE: &str = "_auth";
-// TODO: refresh cookie endpoint
-// const REFRESH_COOKIE: &str = "_refresh";
-
 #[derive(Deserialize, ToSchema)]
 pub struct LoginUser {
     pub email: String,
@@ -136,15 +159,14 @@ pub async fn login_user(
         return Err(AppError::Unauthorized("Invalid credentials"));
     }
 
-    let token = sign_jwt(user.id, &user.email, &state.jwt)?; // your existing signer
+    let token = sign_jwt(user.id, &user.email, &state.jwt)?;
 
-    // Build secure HttpOnly cookie
-    let cookie = Cookie::build((AUTH_COOKIE, token))
+    let cookie = Cookie::build((SETTINGS.auth_cookie_name.clone(), token))
         .http_only(true)
-        .secure(true)
-        .same_site(SameSite::Strict)
-        .path("/")
-        .max_age(Duration::days(7))
+        .secure(SETTINGS.auth_cookie_secure.clone())
+        .same_site(SETTINGS.auth_cookie_samesite.clone())
+        .path(SETTINGS.auth_cookie_path.clone())
+        .max_age(Duration::seconds(SETTINGS.auth_cookie_max_age_secs.clone()))
         .build();
 
     Ok((jar.add(cookie), StatusCode::NO_CONTENT))
@@ -157,7 +179,7 @@ pub async fn login_user(
     responses((status = 204, description = "Logged out"))
 )]
 pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
-    let removal = Cookie::build(AUTH_COOKIE)
+    let removal = Cookie::build(SETTINGS.auth_cookie_name.as_str())
         .http_only(true)
         .secure(true)
         .same_site(SameSite::Lax)

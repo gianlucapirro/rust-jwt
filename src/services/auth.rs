@@ -9,7 +9,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::routes::auth::AUTH_COOKIE;
+use crate::settings::SETTINGS;
 use crate::{AppState, core::errors::app::AppError};
 
 pub struct Hasher {
@@ -45,21 +45,18 @@ impl Hasher {
 pub struct JwtConfig {
     issuer: String,
     audience: String,
-    ttl_seconds: usize,
+    ttl_seconds: i64,
     enc: EncodingKey,
     dec: DecodingKey,
 }
 
 impl JwtConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let secret = std::env::var("JWT_SECRET")?;
+        let secret = SETTINGS.jwt_secret.clone();
         Ok(Self {
-            issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "actuary.aero".into()),
-            audience: std::env::var("JWT_AUDIENCE").unwrap_or_else(|_| "actuary.aero-api".into()),
-            ttl_seconds: std::env::var("JWT_TTL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3600),
+            issuer: SETTINGS.jwt_issuer.clone(),
+            audience: SETTINGS.jwt_audience.clone(),
+            ttl_seconds: SETTINGS.jwt_ttl_secs.clone(),
             enc: EncodingKey::from_secret(secret.as_bytes()),
             dec: DecodingKey::from_secret(secret.as_bytes()),
         })
@@ -125,7 +122,7 @@ where
             .await
             .map_err(|_| AppError::Internal)?;
         let token = jar
-            .get(AUTH_COOKIE)
+            .get(SETTINGS.auth_cookie_name.as_str())
             .ok_or(AppError::Unauthorized("Missing auth cookie"))?
             .value()
             .to_owned();
