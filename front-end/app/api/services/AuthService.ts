@@ -70,4 +70,17 @@ export class AuthService {
             },
         });
     }
+    /**
+     * @returns void
+     * @throws ApiError
+     */
+    public static verify(): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/auth/verify',
+            errors: {
+                401: `Unauthorized`,
+            },
+        });
+    }
 }

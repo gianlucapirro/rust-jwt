@@ -17,11 +17,11 @@ use crate::services::auth::{Auth, Hasher, sign_jwt};
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_user, login_user, logout, me),
+    paths(create_user, login_user, logout, verify, me),
     components(
         schemas(CreateUser, LoginUser, UserResponse),
     ),
-    security(("cookieAuth" = [])),   // apply globally (optional)
+    security(("cookieAuth" = [])),
     tags((name = "Auth", description = "User authentication"))
 )]
 pub struct ApiDocAuth;
@@ -34,6 +34,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/register", axum::routing::post(create_user))
         .route("/login", axum::routing::post(login_user))
         .route("/logout", axum::routing::post(logout))
+        .route("/verify", axum::routing::get(verify))
         .route("/me", axum::routing::get(me))
 }
 
@@ -164,6 +165,20 @@ pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
         .max_age(Duration::seconds(0)) // expire immediately
         .build();
     (jar.add(removal), StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/auth/verify",
+    tags = ["Auth"],
+    responses(
+        (status = 204, description = "Session valid"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn verify(Auth(_): Auth) -> StatusCode {
+    // If the extractor succeeds, the JWT is valid → return 204 No Content
+    StatusCode::NO_CONTENT
 }
 
 #[utoipa::path(

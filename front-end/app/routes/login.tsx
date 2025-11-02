@@ -12,9 +12,12 @@ type FormData = z.infer<typeof loginSchema>;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   try {
-    const user = await AuthService.me();
-    return user;
-  } catch {
+    await AuthService.verify();
+    return true;
+  } catch (err: any) {
+    if (err?.status === 401) return null;
+
+    console.warn("verify failed:", err);
     return null;
   }
 }
@@ -26,13 +29,11 @@ export function shouldRevalidate() {
 export default function Login({ loaderData }: Route.ComponentProps) {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
-  const user = loaderData;
+  const isLoggedIn = loaderData === true;
 
   useEffect(() => {
-    if (user) {
-      navigate("/", { replace: true });
-    }
-  }, [loaderData, navigate]);
+    if (isLoggedIn) navigate("/", { replace: true });
+  }, [isLoggedIn, navigate]);
 
   const {
     register,
