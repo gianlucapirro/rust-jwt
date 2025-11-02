@@ -1,15 +1,15 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
+use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait};
+use sea_orm::SqlErr;
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
-use sea_orm::SqlErr;
 
 use crate::AppState;
-use crate::entities::{users};
 use crate::core::errors::app::AppError;
-use crate::services::auth::{Hasher, sign_jwt, Auth};
 use crate::entities::extensions::models::ByColumn;
+use crate::entities::users;
+use crate::services::auth::{Auth, Hasher, sign_jwt};
 
 // API DOCS
 
@@ -27,9 +27,9 @@ use crate::entities::extensions::models::ByColumn;
 )]
 pub struct ApiDocAuth;
 
-// 
+//
 // Router
-// 
+//
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/register", axum::routing::post(create_user))
@@ -37,14 +37,14 @@ pub fn router() -> axum::Router<AppState> {
         .route("/me", axum::routing::get(me))
 }
 
-// 
+//
 // Endpoints
-// 
+//
 #[derive(Deserialize, ToSchema)]
 pub struct CreateUser {
     pub name: String,
     pub email: String,
-    pub password: String
+    pub password: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -57,7 +57,7 @@ pub struct UserResponse {
 #[utoipa::path(
     post,
     tags = ["Auth"],
-    path = "/auth/register",
+    path = "/api/auth/register",
     request_body = CreateUser,
     responses(
         (status = 201, description = "User created successfully", body = UserResponse),
@@ -79,20 +79,24 @@ pub async fn create_user(
     };
     match active.insert(&state.db).await {
         Ok(user) => {
-            let body = UserResponse {id: user.id, name: user.name, email: email};
+            let body = UserResponse {
+                id: user.id,
+                name: user.name,
+                email: email,
+            };
             Ok(Json(body))
         }
         Err(e) if matches!(e.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
             Err(AppError::Conflict("This user already exists"))
         }
-        Err(_) => Err(AppError::Internal)
+        Err(_) => Err(AppError::Internal),
     }
 }
 
 #[derive(Deserialize, ToSchema)]
 pub struct LoginUser {
     pub email: String,
-    pub password: String
+    pub password: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -103,7 +107,7 @@ pub struct LoginResponse {
 #[utoipa::path(
     post,
     tags = ["Auth"],
-    path = "/auth/login",
+    path = "/api/auth/login",
     request_body = LoginUser,
     responses(
         (status = 200, description = "Login successful"),
@@ -120,7 +124,9 @@ pub async fn login_user(
         .await;
     let user = match user {
         Ok(Some(user)) => {
-            let hasher = Hasher { hash: user.hashed_pwd.clone() };
+            let hasher = Hasher {
+                hash: user.hashed_pwd.clone(),
+            };
             if !hasher.verify(&payload.password) {
                 return Err(AppError::Unauthorized("Invalid credentials"));
             }
@@ -136,13 +142,16 @@ pub async fn login_user(
 #[utoipa::path(
     get,
     tags = ["Auth"],
-    path = "/auth/me",
+    path = "/api/auth/me",
     responses(
         (status = 200, description = "User info retrieved successfully", body = UserResponse),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-async fn me(Auth(claims): Auth, State(state): State<AppState>) -> Result<Json<UserResponse>, AppError> {
+async fn me(
+    Auth(claims): Auth,
+    State(state): State<AppState>,
+) -> Result<Json<UserResponse>, AppError> {
     let user = users::Entity::by(users::Column::Id, claims.sub.parse::<i32>().unwrap())
         .one(&state.db)
         .await

@@ -25,3 +25,11 @@ clean:
 # Build release
 build:
     cargo build --release
+
+# generate openapi yml file
+openapi-generate:
+    @echo "Generate api endpoints"
+    npx openapi-typescript-codegen \
+      --input http://localhost:8080/api/schema/ \
+      --output ./front-end/app/api \
+      --client fetch \
