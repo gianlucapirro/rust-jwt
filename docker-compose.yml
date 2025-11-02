@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine # works on Apple Silicon (arm64)
+    container_name: rust_api_db
+    environment:
+      POSTGRES_USER: rustusr
+      POSTGRES_PASSWORD: debug
+      POSTGRES_DB: rust_api
+    ports:
+      - "5432:5432" # expose to your Rust app on host
+    volumes:
+      - rust_api_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustusr -d rust_api"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  rust_api_db_data:
