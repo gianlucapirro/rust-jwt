@@ -115,11 +115,11 @@ impl FromRequestParts<AppState> for Auth {
         let TypedHeader(Authorization(bearer)) =
             TypedHeader::<Authorization<Bearer>>::from_request_parts(parts, state)
                 .await
-                .map_err(|_| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error":"Missing or invalid Authorization header"}))))?;
+                .map_err(|_| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!("Missing or invalid Authorization header"))))?;
 
         let token = bearer.token();
         let data = decode::<Claims>(token, &state.jwt.dec, &state.jwt.validation())
-            .map_err(|e| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error": format!("Invalid token: {}", e)}))))?;
+            .map_err(|e| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!(format!("Invalid token: {}", e)))))?;
 
         Ok(Auth(data.claims))
     }
