@@ -52,6 +52,19 @@ export class AuthService {
         });
     }
     /**
+     * @returns void
+     * @throws ApiError
+     */
+    public static refresh(): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/auth/refresh',
+            errors: {
+                401: `Unauthorized`,
+            },
+        });
+    }
+    /**
      * @param requestBody
      * @returns UserResponse User created successfully
      * @throws ApiError
