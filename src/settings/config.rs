@@ -20,6 +20,11 @@ pub struct Settings {
     pub auth_cookie_samesite: SameSite, // default: Lax
     pub auth_cookie_secure: bool,       // default: true
     pub auth_cookie_max_age_secs: i64,  // default: 604800
+
+    // SOCIAL LOGIN
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    pub google_redirect_uri: String,
 }
 
 impl Settings {
@@ -42,6 +47,12 @@ impl Settings {
         let auth_cookie_max_age_secs =
             parse_i64(&get("AUTH_COOKIE_MAX_AGE_SECS"), 60 * 60 * 24 * 7)?;
 
+        // SOCIAL LOGIN
+        let google_client_id = must("GOOGLE_CLIENT_ID")?;
+        let google_client_secret = must("GOOGLE_CLIENT_SECRET")?;
+        let google_redirect_uri = get("GOOGLE_REDIRECT_URI")
+            .unwrap_or_else(|| "http://localhost:8080/api/auth/google/callback".into());
+
         Ok(Self {
             database_url,
             jwt_secret,
@@ -54,6 +65,9 @@ impl Settings {
             auth_cookie_samesite,
             auth_cookie_secure,
             auth_cookie_max_age_secs,
+            google_client_id,
+            google_client_secret,
+            google_redirect_uri,
         })
     }
 }

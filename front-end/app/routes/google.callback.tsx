@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-// import { AuthService } from "~/api/services/AuthService";
+import { AuthService } from "~/api/services/AuthService";
 
 export function shouldRevalidate() {
   return false;
@@ -21,10 +21,9 @@ export default function GoogleCallbackPage() {
     async function handleGoogleLogin() {
       try {
         // Perform the Google exchange client-side
-        // await AuthService.authGoogleCreate({ code });
+        await AuthService.authGoogleCreate({ code });
         console.log("Auth with google");
-        // Django should respond with Set-Cookie: _auth / _refresh
-        // Browser stores those automatically (HttpOnly cookies)
+        // Rust should respond with Set-Cookie: _auth / _refresh
         navigate("/", { replace: true });
       } catch (err: any) {
         console.error(err);
