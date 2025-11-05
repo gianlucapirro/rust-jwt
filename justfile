@@ -28,3 +28,11 @@ build:
 
 watch:
     cargo watch -c -w src -x run
+
+# generate openapi yml file
+openapi-generate:
+    @echo "Generate api endpoints"
+    npx openapi-typescript-codegen \
+      --input http://localhost:3000/api-doc/openapi.json \
+      --output ./front-end/app/api \
+      --client fetch \

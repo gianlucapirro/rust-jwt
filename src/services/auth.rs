@@ -1,23 +1,22 @@
+use argon2::password_hash::{PasswordHash, SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
-use argon2::password_hash::{SaltString, PasswordHash, rand_core::OsRng};
-use axum_extra::TypedHeader;
-use jsonwebtoken::{EncodingKey, DecodingKey, Algorithm, Header, Validation, decode};
 use axum::{
-    extract::{FromRequestParts},
-    http::{request::Parts, StatusCode},
+    extract::{FromRef, FromRequestParts, State},
+    http::request::Parts,
 };
-use headers::{Authorization, authorization::Bearer};
+use axum_extra::extract::CookieJar;
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use serde::{Serialize, Deserialize};
 
-use crate::AppState;
-use crate::core::errors::app::AppError;
+use crate::settings::SETTINGS;
+use crate::{AppState, core::errors::app::AppError};
 
-pub struct Hasher{
+pub struct Hasher {
     pub hash: String,
 }
 
-impl Hasher{
+impl Hasher {
     /// Creates a new Hasher instance, containing the hashed password
     pub fn new(password: &str) -> Self {
         let salt = SaltString::generate(&mut OsRng);
@@ -34,8 +33,7 @@ impl Hasher{
 
     /// Verifies password against the stored hash, returning true if they match
     pub fn verify(&self, password: &str) -> bool {
-        let parsed_hash = PasswordHash::new(&self.hash)
-            .expect("invalid stored hash format");
+        let parsed_hash = PasswordHash::new(&self.hash).expect("invalid stored hash format");
 
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed_hash)
@@ -47,18 +45,18 @@ impl Hasher{
 pub struct JwtConfig {
     issuer: String,
     audience: String,
-    ttl_seconds: usize,
+    ttl_seconds: i64,
     enc: EncodingKey,
     dec: DecodingKey,
 }
 
 impl JwtConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let secret = std::env::var("JWT_SECRET")?;
+        let secret = SETTINGS.jwt_secret.clone();
         Ok(Self {
-            issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "actuary.aero".into()),
-            audience: std::env::var("JWT_AUDIENCE").unwrap_or_else(|_| "actuary.aero-api".into()),
-            ttl_seconds: std::env::var("JWT_TTL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(3600),
+            issuer: SETTINGS.jwt_issuer.clone(),
+            audience: SETTINGS.jwt_audience.clone(),
+            ttl_seconds: SETTINGS.jwt_ttl_secs.clone(),
             enc: EncodingKey::from_secret(secret.as_bytes()),
             dec: DecodingKey::from_secret(secret.as_bytes()),
         })
@@ -74,12 +72,11 @@ impl JwtConfig {
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     iss: String,
     aud: String,
-    pub sub: String, // user id 
+    pub sub: String,   // user id
     pub email: String, // email
     iat: i64,
     nbf: i64,
@@ -102,24 +99,37 @@ pub fn sign_jwt(user_id: i32, email: &str, cfg: &JwtConfig) -> Result<String, Ap
         exp,
     };
 
-    encode(&Header::new(Algorithm::HS256), &claims, &cfg.enc)
-        .map_err(|_| AppError::Internal)
+    encode(&Header::new(Algorithm::HS256), &claims, &cfg.enc).map_err(|_| AppError::Internal)
 }
 
 pub struct Auth(pub Claims);
 
-impl FromRequestParts<AppState> for Auth {
-    type Rejection = (StatusCode, axum::Json<serde_json::Value>);
+impl<S> FromRequestParts<S> for Auth
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
-        let TypedHeader(Authorization(bearer)) =
-            TypedHeader::<Authorization<Bearer>>::from_request_parts(parts, state)
-                .await
-                .map_err(|_| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!("Missing or invalid Authorization header"))))?;
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // 1) pull AppState from S
+        let State(app): State<AppState> = State::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppError::Internal)?;
 
-        let token = bearer.token();
-        let data = decode::<Claims>(token, &state.jwt.dec, &state.jwt.validation())
-            .map_err(|e| (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!(format!("Invalid token: {}", e)))))?;
+        // 2) read cookie
+        let jar = CookieJar::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        let token = jar
+            .get(SETTINGS.auth_cookie_name.as_str())
+            .ok_or(AppError::Unauthorized("Missing auth cookie"))?
+            .value()
+            .to_owned();
+
+        // 3) verify
+        let data = jsonwebtoken::decode::<Claims>(&token, &app.jwt.dec, &app.jwt.validation())
+            .map_err(|_| AppError::Unauthorized("Invalid token"))?;
 
         Ok(Auth(data.claims))
     }
