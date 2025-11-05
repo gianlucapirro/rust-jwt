@@ -58,10 +58,10 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState { db, jwt };
 
     let openapi = ApiDoc::openapi().merge_from(routes::auth::ApiDocAuth::openapi());
-    let swagger = SwaggerUi::new("/docs").url("/openapi.json", openapi.clone());
+    let swagger = SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi.clone());
 
     let app = Router::new()
-        .nest("/auth", routes::auth::router())
+        .nest("/api/auth", routes::auth::router())
         .merge(swagger)
         .merge(Redoc::with_url("/redoc", openapi.clone()))
         .with_state(state);
