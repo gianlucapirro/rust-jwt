@@ -12,8 +12,8 @@ export default function AuthRefreshPage() {
   useEffect(() => {
     (async () => {
       try {
-        // await AuthService.authTokenRefreshCreate();
-        navigate(next, { replace: true });
+        await AuthService.refresh();
+        navigate("/");
       } catch (e) {
         setMsg("Session expired. Redirecting to login...");
         navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });

@@ -33,6 +33,6 @@ watch:
 openapi-generate:
     @echo "Generate api endpoints"
     npx openapi-typescript-codegen \
-      --input http://localhost:3000/api-doc/openapi.json \
+      --input http://localhost:3000/api/openapi.json \
       --output ./front-end/app/api \
       --client fetch \
