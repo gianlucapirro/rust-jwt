@@ -17,7 +17,7 @@ use crate::AppState;
 use crate::core::errors::app::AppError;
 use crate::entities::extensions::models::ByColumn;
 use crate::entities::users;
-use crate::services::auth::{Auth, Hasher, sign_jwt};
+use crate::services::auth::{Hasher, VerifyAccessToken, VerifyRefreshToken, issue_auth_cookies};
 use utoipa::Modify;
 
 // API DOCS
@@ -44,7 +44,7 @@ impl Modify for AddCookieAuth {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_user, login_user, logout, verify, me),
+    paths(create_user, login_user, logout, verify, me, refresh),
     components(
         schemas(CreateUser, LoginUser, UserResponse),
     ),
@@ -61,6 +61,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/register", axum::routing::post(create_user))
         .route("/login", axum::routing::post(login_user))
         .route("/logout", axum::routing::post(logout))
+        .route("/refresh", axum::routing::post(refresh))
         .route("/verify", axum::routing::get(verify))
         .route("/me", axum::routing::get(me))
 }
@@ -159,17 +160,9 @@ pub async fn login_user(
         return Err(AppError::Unauthorized("Invalid credentials"));
     }
 
-    let token = sign_jwt(user.id, &user.email, &state.jwt)?;
-
-    let cookie = Cookie::build((SETTINGS.auth_cookie_name.clone(), token))
-        .http_only(true)
-        .secure(SETTINGS.auth_cookie_secure.clone())
-        .same_site(SETTINGS.auth_cookie_samesite.clone())
-        .path(SETTINGS.auth_cookie_path.clone())
-        .max_age(Duration::seconds(SETTINGS.auth_cookie_max_age_secs.clone()))
-        .build();
-
-    Ok((jar.add(cookie), StatusCode::NO_CONTENT))
+    let (auth_cookie, refresh_cookie) = issue_auth_cookies(user.id, state.jwt)?;
+    let jar = jar.add(refresh_cookie).add(auth_cookie);
+    Ok((jar, StatusCode::NO_CONTENT))
 }
 
 #[utoipa::path(
@@ -179,14 +172,23 @@ pub async fn login_user(
     responses((status = 204, description = "Logged out"))
 )]
 pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
-    let removal = Cookie::build(SETTINGS.auth_cookie_name.as_str())
+    let aut_removal = Cookie::build(SETTINGS.auth_cookie_name.as_str())
         .http_only(true)
         .secure(true)
         .same_site(SameSite::Lax)
         .path("/")
         .max_age(Duration::seconds(0)) // expire immediately
         .build();
-    (jar.add(removal), StatusCode::NO_CONTENT)
+    let jar = jar.add(aut_removal);
+    let refresh_removal = Cookie::build(SETTINGS.refresh_cookie_name.as_str())
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(Duration::seconds(0)) // expire immediately
+        .build();
+    let jar = jar.add(refresh_removal);
+    (jar, StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(
@@ -198,7 +200,7 @@ pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
         (status = 401, description = "Unauthorized"),
     )
 )]
-pub async fn verify(Auth(_): Auth) -> StatusCode {
+pub async fn verify(VerifyAccessToken(_): VerifyAccessToken) -> StatusCode {
     // If the extractor succeeds, the JWT is valid → return 204 No Content
     StatusCode::NO_CONTENT
 }
@@ -213,7 +215,7 @@ pub async fn verify(Auth(_): Auth) -> StatusCode {
     ),
 )]
 async fn me(
-    Auth(claims): Auth,
+    VerifyAccessToken(claims): VerifyAccessToken,
     State(state): State<AppState>,
 ) -> Result<axum::Json<UserResponse>, AppError> {
     let uid: i32 = claims
@@ -234,4 +236,28 @@ async fn me(
         name: user.name,
         email: user.email,
     }))
+}
+
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/refresh",
+    tags = ["Auth"],
+    responses(
+        (status = 204, description = "Refreshed successfully"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+async fn refresh(
+    VerifyRefreshToken(claims): VerifyRefreshToken,
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<(CookieJar, StatusCode), AppError> {
+    let uid: i32 = claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::Unauthorized("Bad sub"))?;
+    let (auth_cookie, refresh_cookie) = issue_auth_cookies(uid, state.jwt)?;
+    let jar = jar.add(refresh_cookie).add(auth_cookie);
+    Ok((jar, StatusCode::NO_CONTENT))
 }

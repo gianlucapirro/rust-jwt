@@ -1,3 +1,5 @@
+use cookie::time::Duration;
+
 use argon2::password_hash::{PasswordHash, SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use axum::{
@@ -5,10 +7,11 @@ use axum::{
     http::request::Parts,
 };
 use axum_extra::extract::CookieJar;
+use cookie::Cookie;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-
+use uuid::Uuid;
 use crate::settings::SETTINGS;
 use crate::{AppState, core::errors::app::AppError};
 
@@ -45,66 +48,120 @@ impl Hasher {
 pub struct JwtConfig {
     issuer: String,
     audience: String,
-    ttl_seconds: i64,
-    enc: EncodingKey,
-    dec: DecodingKey,
+    access_ttl_seconds: i64,
+    refresh_ttl_seconds: i64,
+    access_enc: EncodingKey,
+    access_dec: DecodingKey,
+    refresh_enc: EncodingKey,
+    refresh_dec: DecodingKey,
 }
 
 impl JwtConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let secret = SETTINGS.jwt_secret.clone();
+        let access_secret = SETTINGS.jwt_access_secret.clone();
+        let refresh_secret = SETTINGS.jwt_refresh_secret.clone();
+
         Ok(Self {
             issuer: SETTINGS.jwt_issuer.clone(),
             audience: SETTINGS.jwt_audience.clone(),
-            ttl_seconds: SETTINGS.jwt_ttl_secs.clone(),
-            enc: EncodingKey::from_secret(secret.as_bytes()),
-            dec: DecodingKey::from_secret(secret.as_bytes()),
+            access_ttl_seconds: SETTINGS.jwt_access_ttl_secs,
+            refresh_ttl_seconds: SETTINGS.jwt_refresh_ttl_secs,
+            access_enc: EncodingKey::from_secret(access_secret.as_bytes()),
+            access_dec: DecodingKey::from_secret(access_secret.as_bytes()),
+            refresh_enc: EncodingKey::from_secret(refresh_secret.as_bytes()),
+            refresh_dec: DecodingKey::from_secret(refresh_secret.as_bytes()),
         })
     }
 
-    pub fn validation(&self) -> Validation {
+    pub fn access_validation(&self) -> Validation {
         let mut v = Validation::new(Algorithm::HS256);
         v.set_issuer(&[self.issuer.clone()]);
         v.set_audience(&[self.audience.clone()]);
         v.validate_exp = true;
-        v.leeway = 5; // small clock skew
+        v.leeway = 5;
+        v
+    }
+
+    pub fn refresh_validation(&self) -> Validation {
+        let mut v = Validation::new(Algorithm::HS256);
+        v.set_issuer(&[self.issuer.clone()]);
+        v.set_audience(&[self.audience.clone()]);
+        v.validate_exp = true;
+        v.leeway = 5;
         v
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Claims {
+pub enum TokenType {
+    Access,
+    Refresh,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct JWTClaim{
     iss: String,
     aud: String,
-    pub sub: String,   // user id
-    pub email: String, // email
+    pub sub: String,
     iat: i64,
     nbf: i64,
     exp: i64,
+    jti: String,
+    token_type: TokenType
 }
 
-pub fn sign_jwt(user_id: i32, email: &str, cfg: &JwtConfig) -> Result<String, AppError> {
+pub fn sign_jwt(user_id: i32, token_type: TokenType, cfg: &JwtConfig) -> Result<String, AppError> {
+    /// Encodes and signs a JWT for the give user ID and token type
     use jsonwebtoken::encode;
 
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let exp = now + cfg.ttl_seconds as i64;
+    let (exp, enc) = match token_type {
+        TokenType::Access => {
+            (now + cfg.access_ttl_seconds as i64, &cfg.access_enc)
+        },
+        TokenType::Refresh => {
+            (now + cfg.refresh_ttl_seconds as i64, &cfg.refresh_enc)
+        },
+    };
 
-    let claims = Claims {
+    let claims = JWTClaim {
         iss: cfg.issuer.clone(),
         aud: cfg.audience.clone(),
         sub: user_id.to_string(),
-        email: email.to_string(),
         iat: now,
         nbf: now - 1,
         exp,
+        jti: Uuid::new_v4().to_string(),
+        token_type: token_type,
     };
 
-    encode(&Header::new(Algorithm::HS256), &claims, &cfg.enc).map_err(|_| AppError::Internal)
+    encode(&Header::new(Algorithm::HS256), &claims, enc).map_err(|_| AppError::Internal)
 }
 
-pub struct Auth(pub Claims);
+pub fn issue_auth_cookies(user_id: i32, cfg: JwtConfig) -> Result<(Cookie<'static>, Cookie<'static>), AppError> {
+    let token = sign_jwt(user_id, TokenType::Access, &cfg)?;
+    let auth_cookie = Cookie::build((SETTINGS.auth_cookie_name.clone(), token.clone()))
+        .http_only(true)
+        .secure(SETTINGS.auth_cookie_secure.clone())
+        .same_site(SETTINGS.auth_cookie_samesite.clone())
+        .path(SETTINGS.auth_cookie_path.clone())
+        .max_age(Duration::seconds(SETTINGS.jwt_access_ttl_secs.clone()))
+        .build();
 
-impl<S> FromRequestParts<S> for Auth
+    let refresh_token = sign_jwt(user_id, TokenType::Refresh, &cfg)?;
+    let refresh_cookie = Cookie::build((SETTINGS.refresh_cookie_name.clone(), refresh_token.clone()))
+        .http_only(true)
+        .secure(SETTINGS.auth_cookie_secure.clone())
+        .same_site(SETTINGS.auth_cookie_samesite.clone())
+        .path(SETTINGS.refresh_cookie_path.clone())
+        .max_age(Duration::seconds(SETTINGS.jwt_refresh_ttl_secs.clone()))
+        .build();
+    Ok((auth_cookie, refresh_cookie))
+}
+
+pub struct VerifyAccessToken(pub JWTClaim);
+
+impl<S> FromRequestParts<S> for VerifyAccessToken
 where
     S: Send + Sync,
     AppState: FromRef<S>,
@@ -121,16 +178,51 @@ where
         let jar = CookieJar::from_request_parts(parts, state)
             .await
             .map_err(|_| AppError::Internal)?;
+
         let token = jar
             .get(SETTINGS.auth_cookie_name.as_str())
-            .ok_or(AppError::Unauthorized("Missing auth cookie"))?
+            .ok_or(AppError::Unauthorized("Unauthorized"))?
             .value()
             .to_owned();
 
         // 3) verify
-        let data = jsonwebtoken::decode::<Claims>(&token, &app.jwt.dec, &app.jwt.validation())
+        let data = jsonwebtoken::decode::<JWTClaim>(&token, &app.jwt.access_dec, &app.jwt.access_validation())
             .map_err(|_| AppError::Unauthorized("Invalid token"))?;
 
-        Ok(Auth(data.claims))
+        Ok(VerifyAccessToken(data.claims))
+    }
+}
+
+pub struct VerifyRefreshToken(pub JWTClaim);
+
+impl<S> FromRequestParts<S> for VerifyRefreshToken
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // 1) pull AppState from S
+        let State(app): State<AppState> = State::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppError::Internal)?;
+
+        // 2) read cookie
+        let jar = CookieJar::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppError::Internal)?;
+
+        let token = jar
+            .get(SETTINGS.refresh_cookie_name.as_str())
+            .ok_or(AppError::Unauthorized("Unauthorized"))?
+            .value()
+            .to_owned();
+
+        // 3) verify
+        let data = jsonwebtoken::decode::<JWTClaim>(&token, &app.jwt.refresh_dec, &app.jwt.refresh_validation())
+            .map_err(|_| AppError::Unauthorized("Invalid token"))?;
+
+        Ok(VerifyRefreshToken(data.claims))
     }
 }
