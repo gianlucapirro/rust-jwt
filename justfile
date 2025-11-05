@@ -25,3 +25,6 @@ clean:
 # Build release
 build:
     cargo build --release
+
+watch:
+    cargo watch -c -w src -x run
