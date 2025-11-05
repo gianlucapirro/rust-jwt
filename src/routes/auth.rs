@@ -85,7 +85,7 @@ pub struct UserResponse {
 #[utoipa::path(
     post,
     tags = ["Auth"],
-    path = "/api/auth/register",
+    path = "/auth/register",
     request_body = CreateUser,
     responses(
         (status = 201, description = "User created successfully", body = UserResponse),
@@ -130,7 +130,7 @@ pub struct LoginUser {
 #[utoipa::path(
     post,
     tags = ["Auth"],
-    path = "/api/auth/login",
+    path = "/auth/login",
     request_body = LoginUser,
     responses(
         (status = 204, description = "Login successful, cookie set"),
@@ -175,7 +175,7 @@ pub async fn login_user(
 #[utoipa::path(
     post,
     tags = ["Auth"],
-    path = "/api/auth/logout",
+    path = "/auth/logout",
     responses((status = 204, description = "Logged out"))
 )]
 pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
@@ -191,7 +191,7 @@ pub async fn logout(jar: CookieJar) -> (CookieJar, StatusCode) {
 
 #[utoipa::path(
     get,
-    path = "/api/auth/verify",
+    path = "/auth/verify",
     tags = ["Auth"],
     responses(
         (status = 204, description = "Session valid"),
@@ -206,7 +206,7 @@ pub async fn verify(Auth(_): Auth) -> StatusCode {
 #[utoipa::path(
     get,
     tags = ["Auth"],
-    path = "/api/auth/me",
+    path = "/auth/me",
     responses(
         (status = 200, description = "User info retrieved successfully", body = UserResponse),
         (status = 401, description = "Unauthorized"),
