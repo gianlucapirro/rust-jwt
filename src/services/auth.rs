@@ -169,21 +169,32 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        println!("Verifying access token...");
         // 1) pull AppState from S
         let State(app): State<AppState> = State::from_request_parts(parts, state)
             .await
             .map_err(|_| AppError::Internal)?;
 
+        println!("AppState pulled from state.");
         // 2) read cookie
         let jar = CookieJar::from_request_parts(parts, state)
             .await
             .map_err(|_| AppError::Internal)?;
+    
+        println!("inside jar: {:?}", jar);
 
+        println!("CookieJar extracted from request parts.");
         let token = jar
-            .get(SETTINGS.auth_cookie_name.as_str())
+            .get(SETTINGS.auth_cookie_name.as_str());
+
+        println!("acces token name: {}", SETTINGS.auth_cookie_name.as_str());
+        println!("Access token cookie retrieved: {:?}", token);
+        let token = token
             .ok_or(AppError::Unauthorized("Unauthorized"))?
             .value()
             .to_owned();
+
+        println!("Token from cookie: {}", token);
 
         // 3) verify
         let data = jsonwebtoken::decode::<JWTClaim>(&token, &app.jwt.access_dec, &app.jwt.access_validation())
