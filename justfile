@@ -27,7 +27,10 @@ build:
     cargo build --release
 
 watch:
-    cargo watch -c -w src -x run
+    ENV_FILE=.env cargo watch -c -w src -x run
+
+test:
+    ENV_FILE=.env.test cargo test
 
 # generate openapi yml file
 openapi-generate:
