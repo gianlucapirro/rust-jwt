@@ -222,13 +222,13 @@ pub async fn login_or_create_social_user(
 pub fn set_auth_cookie<R>(
     response: &mut R,
     user: &users::Model,
-    jwt_secret: &str,
+    jwt_config: &JwtConfig,
 ) -> Result<(), AppError>
 where
     R: IntoResponse,
 {
     // 1. Build JWT (reuse your existing function)
-    let token = sign_jwt(user.id, &user.email, jwt_secret)?;
+    let token = sign_jwt(user.id, &user.email, jwt_config)?;
 
     // 2. Build cookie – exact same settings you use in `login_user`
     let cookie = Cookie::build((SETTINGS.auth_cookie_name.clone(), token))
