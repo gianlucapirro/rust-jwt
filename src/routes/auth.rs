@@ -76,7 +76,7 @@ pub struct CreateUser {
     pub password: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Deserialize)]
 pub struct UserResponse {
     pub id: i32,
     pub name: String,

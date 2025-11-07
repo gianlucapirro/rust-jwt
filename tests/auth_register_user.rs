@@ -1,54 +1,35 @@
 use axum::{
     body::Body,
     http::{Request, StatusCode},
-    routing::post,
-    Router,
 };
 use sea_orm::{DatabaseBackend, MockDatabase};
 use serde_json::json;
-use tower::ServiceExt; // for `.oneshot()`
+use tower::ServiceExt;
 
 use api::{
-    routes::auth::{create_user, UserResponse},
-    entities::users,
-    services::auth::JwtConfig,
-    AppState,
+    entities::users, routes::auth::UserResponse, services::auth::JwtConfig, settings::load_env, setup::build_app
 };
+use chrono::Utc;
 
 #[tokio::test]
 async fn register_creates_user_and_returns_payload() {
-    // 1. Arrange: set up a mocked database response.
-    // SeaORM's ActiveModel::insert will call INSERT ... RETURNING * under Postgres,
-    // so MockDatabase must have a query result representing that returned row.
+    load_env();
     let mock_user = users::Model {
         id: 1,
         name: "Ada Lovelace".to_string(),
         email: "ada@example.com".to_string(),
         hashed_pwd: "hashed".to_string(),
+        created_at: Utc::now().naive_utc(),
     };
 
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![vec![mock_user]])
         .into_connection();
 
-    // 2. Prepare a JwtConfig for the AppState
-    // This endpoint doesn’t use JWTs, but AppState requires it.
-    // Make sure your JwtConfig::from_env() works with these defaults.
-    std::env::set_var("JWT_SECRET", "test-secret");
-    std::env::set_var("JWT_EXP_MINUTES", "15");
-    std::env::set_var("REFRESH_EXP_DAYS", "7");
-    std::env::set_var("AUTH_COOKIE_NAME", "auth");
-    std::env::set_var("REFRESH_COOKIE_NAME", "refresh");
     let jwt = JwtConfig::from_env().expect("failed to create JwtConfig");
 
-    let state = AppState { db, jwt };
+    let app = build_app(Some(db), Some(jwt)).await.expect("failed to build app");
 
-    // 3. Build the app with just the register route
-    let app = Router::new()
-        .route("/api/auth/register", post(create_user))
-        .with_state(state);
-
-    // 4. Act: send a test HTTP request to the route
     let payload = json!({
         "name": "Ada Lovelace",
         "email": "Ada@Example.com", // will be lowercased by handler

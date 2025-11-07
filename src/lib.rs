@@ -5,8 +5,8 @@ pub mod entities;
 pub mod routes;
 pub mod services;
 pub mod settings;
+pub mod setup;
 
-use axum::Router;
 use sea_orm::DatabaseConnection;
 
 pub use crate::services::auth::JwtConfig;
@@ -15,11 +15,4 @@ pub use crate::services::auth::JwtConfig;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub jwt: JwtConfig,
-}
-
-/// Build the API router (already bound to state).
-pub fn build_api_router(state: AppState) -> Router {
-    Router::new()
-        .nest("/api/auth", routes::auth::router())
-        .with_state(state)
 }
