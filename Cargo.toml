@@ -36,3 +36,10 @@ cookie = "0.18.1"
 once_cell = "1.21.3"
 uuid = {version="1.18.1", features = ["v4"]}
 chrono = "0.4.42"
+
+# dev
+[dev-dependencies]
+migration ={ path = "./migration" }
+testcontainers = {version="0.25.2"}
+testcontainers-modules = {version="0.13.0", features = ["postgres"] }
+sea-orm-migration = { version = "2.0.0-rc", features = ["runtime-tokio-rustls", "sqlx-postgres"] }

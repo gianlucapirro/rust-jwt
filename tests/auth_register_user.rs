@@ -2,37 +2,35 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use sea_orm::{DatabaseBackend, MockDatabase};
+use migration::sea_orm::Database;
+
 use serde_json::json;
 use tower::ServiceExt;
 
 use api::{
-    entities::users, routes::auth::UserResponse, services::auth::JwtConfig, settings::load_env, setup::build_app
+    routes::auth::UserResponse, services::auth::JwtConfig, settings::load_env, setup::build_app
 };
-use chrono::Utc;
+use testcontainers_modules::postgres::Postgres;
+use testcontainers::runners::AsyncRunner;
+use migration::{Migrator, MigratorTrait};
 
 #[tokio::test]
 async fn register_creates_user_and_returns_payload() {
     load_env();
-    let mock_user = users::Model {
-        id: 1,
-        name: "Ada Lovelace".to_string(),
-        email: "ada@example.com".to_string(),
-        hashed_pwd: "hashed".to_string(),
-        created_at: Utc::now().naive_utc(),
-    };
 
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_query_results(vec![vec![mock_user]])
-        .into_connection();
+    let container = Postgres::default().start().await.unwrap();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+
+    let db = Database::connect(&url).await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
 
     let jwt = JwtConfig::from_env().expect("failed to create JwtConfig");
-
     let app = build_app(Some(db), Some(jwt)).await.expect("failed to build app");
 
     let payload = json!({
         "name": "Ada Lovelace",
-        "email": "Ada@Example.com", // will be lowercased by handler
+        "email": "Ada@Example.com",
         "password": "swordfish"
     });
 
@@ -45,8 +43,7 @@ async fn register_creates_user_and_returns_payload() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    // 5. Assert: status and returned JSON
-    assert_eq!(response.status(), StatusCode::OK); // handler currently returns 200 OK
+    assert_eq!(response.status(), StatusCode::OK);
 
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
