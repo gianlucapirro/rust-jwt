@@ -2,32 +2,18 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use migration::sea_orm::Database;
-
+use sea_orm::ActiveModelTrait;
+use sea_orm::ActiveValue::Set;
 use serde_json::json;
 use tower::ServiceExt;
-
-use api::{
-    routes::auth::UserResponse, services::auth::JwtConfig, settings::load_env, setup::build_app
-};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers::runners::AsyncRunner;
-use migration::{Migrator, MigratorTrait};
+use api::{routes::auth::UserResponse};
+use api::entities::users;
+mod utils;
 
 #[tokio::test]
 async fn register_creates_user_and_returns_payload() {
-    load_env();
-
-    let container = Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-
-    let db = Database::connect(&url).await.unwrap();
-    Migrator::up(&db, None).await.unwrap();
-
-    let jwt = JwtConfig::from_env().expect("failed to create JwtConfig");
-    let app = build_app(Some(db), Some(jwt)).await.expect("failed to build app");
-
+    let test_app = utils::setup_test_app().await;
+    let app = test_app.app;
     let payload = json!({
         "name": "Ada Lovelace",
         "email": "Ada@Example.com",
@@ -53,4 +39,40 @@ async fn register_creates_user_and_returns_payload() {
     assert_eq!(body.id, 1);
     assert_eq!(body.name, "Ada Lovelace");
     assert_eq!(body.email, "ada@example.com");
+}
+
+
+#[tokio::test]
+async fn register_creates_user_already_exists() {
+    let test_app = utils::setup_test_app().await;
+    let app = test_app.app;
+
+    let db = test_app.db.db;
+
+    let existing_user = users::ActiveModel {
+        id: Set(1),
+        name: Set("Ada Lovelace".to_string()),
+        email: Set("ada@example.com".to_string()),
+        hashed_pwd: Set("hashed_pwd".to_string()),
+        created_at: Set(chrono::Utc::now().naive_utc()),
+        ..Default::default()
+    };
+    existing_user.insert(&db).await.unwrap();
+
+    let payload = json!({
+        "name": "Ada Lovelace",
+        "email": "Ada@Example.com",
+        "password": "swordfish"
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/auth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
